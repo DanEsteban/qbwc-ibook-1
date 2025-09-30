@@ -1,14 +1,15 @@
-export type Entity = 'clientes' | 'productos' | 'facturas';
-
-export interface BatchMeta {
+export interface DocMeta {
   ticket: string;
-  jobType: Entity;
-  seq: number;
-  totalSoFar: number;
+  source: 'quickbooks';
+  category: 'invoices';
+  iteratorId?: string;
   remaining?: number;
+  seq: number;          // número de mensaje / página
 }
 
-export interface Sink {
-  onBatch(entity: Entity, records: any[], meta: BatchMeta): Promise<void>;
-  onDone(entity: Entity, meta: BatchMeta): Promise<void>;
+export interface DocSink {
+  // Recibe una respuesta XML de QuickBooks convertida a JSON y la publica
+  pushDocument(meta: DocMeta, quickbooksJson: any): Promise<void>;
 }
+
+

@@ -15,8 +15,8 @@ export function customerQueryRq(iteratorId?: string, max?: number) {
     const it = iteratorId ? ` iterator="Continue" iteratorID="${iteratorId}"` : ' iterator="Start"';
     const m = max ?? AppConfig.maxReturned;
     return envelope(`<CustomerQueryRq${it}>
-      <MaxReturned>${m}</MaxReturned>
-      <ActiveStatus>All</ActiveStatus>
+        <MaxReturned>${m}</MaxReturned>
+        <ActiveStatus>All</ActiveStatus>
     </CustomerQueryRq>`);
 }
 
@@ -24,15 +24,15 @@ export function itemInventoryQueryRq(iteratorId?: string, max?: number) {
     const it = iteratorId ? ` iterator="Continue" iteratorID="${iteratorId}"` : ' iterator="Start"';
     const m = max ?? AppConfig.maxReturned;
     return envelope(`<ItemInventoryQueryRq${it}>
-      <MaxReturned>${m}</MaxReturned>
-      <ActiveStatus>All</ActiveStatus>
+        <MaxReturned>${m}</MaxReturned>
+        <ActiveStatus>All</ActiveStatus>
     </ItemInventoryQueryRq>`);
 }
 
 export function invoiceQueryRq(iteratorId?: string, max?: number, fromModifiedDate?: string) {
     const it = iteratorId ? ` iterator="Continue" iteratorID="${iteratorId}"` : ' iterator="Start"';
     const m = max ?? AppConfig.maxReturned;
-
+    
     let dateFilter = '';
     if (fromModifiedDate) {
         const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,7 +44,10 @@ export function invoiceQueryRq(iteratorId?: string, max?: number, fromModifiedDa
     }
 
     return envelope(`<InvoiceQueryRq${it}>
-      ${dateFilter}
-      <MaxReturned>${m}</MaxReturned>
+        ${dateFilter}
+        <MaxReturned>${m}</MaxReturned>
+        <IncludeLineItems>true</IncludeLineItems>
+        <IncludeLinkedTxns>true</IncludeLinkedTxns>
+        <OwnerID>0</OwnerID>
     </InvoiceQueryRq>`);
 }

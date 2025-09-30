@@ -10,8 +10,14 @@ export const AppConfig = {
   maxReturned: Number(process.env.MAX_RETURNED ?? 50),
   baseUrl: process.env.BASE_URL ?? `http://localhost:${process.env.PORT ?? 3000}`,
 
-  // Destino HTTP
-  targetApiBase: process.env.TARGET_API_BASE ?? 'http://localhost:4000',
+  // Destino HTTP ibook
+  // targetApiBase: process.env.TARGET_API_BASE ?? 'http://localhost:4000',
+  // targetApiKey: process.env.TARGET_API_KEY ?? '',
+  // targetApiSecret: process.env.TARGET_API_SECRET ?? '',
+
+  // Destino HTTP facturacion backend
+  companyId: process.env.COMPANY_ID ?? 'default-company',
+  targetApiBase: process.env.TARGET_API_BASE ?? 'http://localhost:3001',
   targetApiKey: process.env.TARGET_API_KEY ?? '',
   targetApiSecret: process.env.TARGET_API_SECRET ?? '',
 };

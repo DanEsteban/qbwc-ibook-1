@@ -4,9 +4,9 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { AppConfig } from './config/app.config';
 import { getWSDL } from './qbwc/qbwc.wsdl';
-import { HttpSink } from './sink/http-sink';
 import { JobQueue } from './queue/job-queue';
 import { qbwcServiceFactory } from './qbwc/qbwc.soap';
+import { HttpDocSink } from './sink/http-doc-sink';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -14,10 +14,8 @@ async function bootstrap() {
 
   const server = app.getHttpAdapter().getInstance();
   const wsdlXml = getWSDL();
-  console.log('🔧 WSDL generated with URL:', AppConfig.baseUrl);
 
-  // Nuevo: Sink HTTP + JobQueue con Sink
-  const sink = new HttpSink();
+  const sink = new HttpDocSink();
   const jobQueue = new JobQueue(sink);
   const service = qbwcServiceFactory(jobQueue);
 
@@ -42,10 +40,8 @@ async function bootstrap() {
 
   console.log('======================================');
   console.log(`🚀 Aplicación iniciada en: ${AppConfig.baseUrl}`);
-  console.log(`📡 QBWC endpoint: ${AppConfig.baseUrl}/qbwc`);
-  console.log(`📄 WSDL: ${AppConfig.baseUrl}/qbwc?wsdl`);
+  console.log(`🚀 SOAP: ${AppConfig.baseUrl}/qbwc  |  WSDL: ${AppConfig.baseUrl}/qbwc?wsdl`);
   console.log(`🎯 Target API: ${AppConfig.targetApiBase}`);
-  console.log(`📋 Credenciales: user=${AppConfig.qbwcUser}`);
   console.log('======================================');
 }
 bootstrap().catch((err) => {

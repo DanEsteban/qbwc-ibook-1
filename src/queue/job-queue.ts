@@ -1,179 +1,89 @@
+import { XMLParser } from 'fast-xml-parser';
 import { parseIterator } from '../qbxml/iterators';
-import { CustomersExporter } from '../exporters/customers.exporter';
-import { ItemsExporter } from '../exporters/items.exporter';
 import { InvoicesExporter } from '../exporters/invoices.exporter';
-import { parseCustomers, parseItems, parseInvoices } from '../qbxml/parsers';
-import { Sink } from '../sink/sink';
+import { DocSink } from '../sink/sink';
 
-type JobType = 'customers' | 'items' | 'invoices';
+const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
 
 interface Job {
-  type: JobType;
   iteratorId?: string;
-  recordCount: number;
-  maxRecords: number;
-  seq: number;
-  batchSize: number;
+  seq: number; // contador de página/respuesta
 }
 
-const entityMap: Record<JobType, 'clientes' | 'productos' | 'facturas'> = {
-  customers: 'clientes',
-  items: 'productos',
-  invoices: 'facturas',
-};
-
 export class JobQueue {
-  private sessions = new Map<string, Job[]>();
+  private sessions = new Map<string, Job>();
   private lastError = new Map<string, string>();
 
-  constructor(private readonly sink: Sink) {}
+  constructor(private readonly sink: DocSink) { }
 
   createSession(ticket: string) {
-    const jobs: Job[] = [
-      {
-        type: 'customers',
-        recordCount: 0,
-        maxRecords: 200,
-        seq: 0,
-        batchSize: 50,
-      },
-      { type: 'items', recordCount: 0, maxRecords: 200, seq: 0, batchSize: 50 },
-      {
-        type: 'invoices',
-        recordCount: 0,
-        maxRecords: 200,
-        seq: 0,
-        batchSize: 50,
-      },
-    ];
-    this.sessions.set(ticket, jobs);
-    console.log('🎫 Session created - sending to HTTP sink');
+    this.sessions.set(ticket, { iteratorId: undefined, seq: 0 });
+    console.log('🎫 Session created - invoices only → /documents');
   }
 
   next(ticket: string): { qbxml: string } | null {
-    const q = this.sessions.get(ticket);
-    if (!q || q.length === 0) {
-      console.log('✅ No more jobs for ticket:', ticket);
-      return null;
-    }
-    const job = q[0];
-
-    if (job.recordCount >= job.maxRecords) {
-      console.log(
-        `🛑 ${job.type} limit reached: ${job.recordCount}/${job.maxRecords}`,
-      );
-      this.sink
-        .onDone(entityMap[job.type], {
-          ticket,
-          jobType: entityMap[job.type],
-          seq: job.seq,
-          totalSoFar: job.recordCount,
-        })
-        .catch(() => {});
-      q.shift();
-      return this.next(ticket);
-    }
+    const job = this.sessions.get(ticket);
+    if (!job) return null;
 
     try {
-      const qbxml = this.buildRequest(job);
-      console.log(
-        `🔄 ${job.type} request (${job.recordCount}/${job.maxRecords})`,
-      );
+      const qbxml = new InvoicesExporter().buildRequest(job.iteratorId);
+      console.log(`🔄 invoices request (iteratorId=${job.iteratorId ?? 'Start'})`);
       return { qbxml };
     } catch (e: any) {
-      console.error(`❌ Error building ${job.type} request:`, e.message);
-      this.lastError.set(ticket, `Error in ${job.type}: ${e.message}`);
-      q.shift();
-      return this.next(ticket);
+      console.error('❌ Error building invoices request:', e.message);
+      this.lastError.set(ticket, `Error in invoices: ${e.message}`);
+      this.sessions.delete(ticket);
+      return null;
     }
   }
 
   onResponse(ticket: string, responseXml: string): number {
-    const q = this.sessions.get(ticket);
-    if (!q || q.length === 0) return 100;
-    const job = q[0];
-    console.log(`📨 Processing ${job.type} response`);
+    const job = this.sessions.get(ticket);
+    if (!job) return 100;
 
     try {
-      let records: any[] = [];
-      switch (job.type) {
-        case 'customers':
-          records = parseCustomers(responseXml);
-          break;
-        case 'items':
-          records = parseItems(responseXml);
-          break;
-        case 'invoices':
-          records = parseInvoices(responseXml);
-          break;
-      }
+      // 1) Convertir XML → JSON (completo, sin perder estructura)
+      const quickbooksJson = parser.parse(responseXml);
 
-      const remainingAllowance = Math.max(job.maxRecords - job.recordCount, 0);
-      const toSend = records.slice(0, remainingAllowance);
-      job.recordCount += toSend.length;
-
-      const entity = entityMap[job.type];
-      for (let i = 0; i < toSend.length; i += job.batchSize) {
-        const batch = toSend.slice(i, i + job.batchSize);
-        const seq = ++job.seq;
-        this.sink
-          .onBatch(entity, batch, {
-            ticket,
-            jobType: entity,
-            seq,
-            totalSoFar: job.recordCount,
-          })
-          .catch((err) => {
-            console.error('❌ Sink error:', err?.message || err);
-            this.lastError.set(
-              ticket,
-              `Sink error ${entity}: ${err?.message || err}`,
-            );
-          });
-      }
-
+      // 2) Empujar documento al backend
       const { done, nextIterator, remaining } = parseIterator(responseXml);
-      if (!done && nextIterator && job.recordCount < job.maxRecords) {
+      const seq = ++job.seq;
+      this.sink.pushDocument(
+        {
+          ticket,
+          source: 'quickbooks',
+          category: 'invoices',
+          iteratorId: job.iteratorId,
+          remaining,
+          seq,
+        },
+        quickbooksJson
+      ).catch(err => {
+        console.error('❌ pushDocument error:', err?.message || err);
+        this.lastError.set(ticket, `Sink error: ${err?.message || err}`);
+      });
+
+      // 3) Continuación del iterator
+      if (!done && nextIterator) {
         job.iteratorId = nextIterator;
-        console.log(
-          `⏭️ ${job.type} continues (remain from QB: ${remaining ?? '?'})`,
-        );
-        return 50;
+        console.log(`⏭️ invoices continues (remaining from QB: ${remaining ?? '?'})`);
+        return 50; // indicar a QBWC que hay más trabajo
       }
 
-      console.log(`✅ ${job.type} completed with ${job.recordCount} records`);
-      this.sink
-        .onDone(entity, {
-          ticket,
-          jobType: entity,
-          seq: job.seq,
-          totalSoFar: job.recordCount,
-        })
-        .catch(() => {});
-      q.shift();
-      return q.length === 0 ? 100 : 10;
+      // 4) Completado
+      console.log(`✅ invoices completed (pages: ${job.seq})`);
+      this.sessions.delete(ticket);
+      return 100;
+
     } catch (e: any) {
-      console.error(`❌ Error processing ${job.type}:`, e.message);
-      this.lastError.set(ticket, `Error processing ${job.type}: ${e.message}`);
-      q.shift();
-      return q.length > 0 ? 10 : 100;
+      console.error('❌ Error processing invoices:', e.message);
+      this.lastError.set(ticket, `Error processing invoices: ${e.message}`);
+      this.sessions.delete(ticket);
+      return 100;
     }
   }
 
   getLastError(ticket: string) {
     return this.lastError.get(ticket) ?? '';
-  }
-
-  private buildRequest(job: Job): string {
-    switch (job.type) {
-      case 'customers':
-        return new CustomersExporter().buildRequest(job.iteratorId);
-      case 'items':
-        return new ItemsExporter().buildRequest(job.iteratorId);
-      case 'invoices':
-        return new InvoicesExporter().buildRequest(job.iteratorId);
-      default:
-        throw new Error(`Tipo de job no soportado: ${job.type}`);
-    }
   }
 }
