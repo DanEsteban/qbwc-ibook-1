@@ -10,7 +10,6 @@ export class HttpDocSink implements DocSink {
                'Content-Type': 'application/json',
                'X-API-Key': AppConfig.targetApiKey,
                'X-Company-Id': AppConfig.companyId
-               // ...(AppConfig.targetApiKey ? { 'X-API-Key': AppConfig.targetApiKey } : {}),
           },
      });
 
@@ -20,23 +19,32 @@ export class HttpDocSink implements DocSink {
                quickbooks_data: quickbooksJson
           };
 
+          // AGREGAR: Extraer jobId del ticket si existe
+          const companyId = meta.companyId ?? AppConfig.companyId;
+          const jobId = meta.jobId ?? null;
+
           try {
-               const response = await this.client.post('/quickbooks/qbd/receive', payload, {
+               await this.client.post('/quickbooks/qbd/receive', payload, {
                     headers: {
-                         'Idempotency-Key': `${meta.ticket}:invoices:${meta.seq}`
+                         'Idempotency-Key': `${meta.ticket}:${meta.category}:${meta.seq}`,
+                         'X-Company-Id': companyId,
+                         ...(jobId ? { 'X-Job-Id': jobId } : {}),
                     },
                });
-
-               console.log('✅ Document sent successfully:', response.data);
-          } catch (error) {
+               console.log('Document sent successfully');
+          } catch (error: any) {
                if (error.response?.status === 409) {
-                    console.log('⚠️ Document already processed (duplicate)');
-                    // No es un error real, el documento ya fue procesado
+                    console.log('Document already processed (duplicate)');
                     return;
                }
-
-               console.error('❌ Error sending document:', error.message);
+               // Log útil para depurar 400
+               console.error('Error sending document:', {
+                    message: error.message,
+                    status: error.response?.status,
+                    data: error.response?.data,
+               });
                throw error;
           }
      }
+
 }

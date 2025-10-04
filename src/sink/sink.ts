@@ -5,6 +5,8 @@ export interface DocMeta {
   iteratorId?: string;
   remaining?: number;
   seq: number;          // número de mensaje / página
+  jobId?: string;
+  companyId?: string;
 }
 
 export interface DocSink {

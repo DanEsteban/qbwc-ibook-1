@@ -2,9 +2,9 @@
 <QBWCXML>
   <AppName>IBOOK-QB Bridge</AppName>
   <AppID></AppID>
-  <AppURL>http://localhost:3000/qbwc</AppURL>
+  <AppURL>http://localhost:3005/qbwc</AppURL>
   <AppDescription>Bridge SOAP for QBWC to push data to HTTP API</AppDescription>
-  <AppSupport>http://localhost:3000/</AppSupport>
+  <AppSupport>http://localhost:3005/</AppSupport>
 
   <UserName>qbwc-user</UserName>
   <OwnerID>{7C8D9E1A-2B3C-4D5E-8612-9F0A1B2C3D4E}</OwnerID>

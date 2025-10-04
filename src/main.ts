@@ -10,10 +10,10 @@ import { HttpDocSink } from './sink/http-doc-sink';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  app.enableCors();
 
   const server = app.getHttpAdapter().getInstance();
-  const wsdlXml = getWSDL();
+  //(Web Services Description Language)
+  const wsdlXml = getWSDL(); 
 
   const sink = new HttpDocSink();
   const jobQueue = new JobQueue(sink);

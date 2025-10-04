@@ -13,31 +13,42 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           return { clientVersionResult: '' };
         },
 
-        authenticate: ({ strUserName, strPassword }: any) => {
+        authenticate: async ({ strUserName, strPassword }: any) => {
           if (strUserName !== AppConfig.qbwcUser || strPassword !== AppConfig.qbwcPass) {
             console.log('❌ Authentication FAILED - Invalid credentials');
             return { authenticateResult: { string: ['', 'not valid user'] } };
           }
 
           const ticket = `${Date.now()}-${Math.random()}`;
-          jobQueue.createSession(ticket);
-          console.log('✅ Authentication successful, ticket:', ticket);
+          
+          const companyId = AppConfig.companyId;
+          const hasJobs = await jobQueue.createSession(ticket, companyId);
+          
+          if (!hasJobs) {
+            console.log('⚠️ No pending jobs for this company');
+            return { authenticateResult: { string: ['', 'No work to do'] } };
+          }
 
+          console.log('✅ Authentication successful, ticket:', ticket);
           return { authenticateResult: { string: [ticket, ''] } };
         },
 
-        sendRequestXML: ({ ticket }: any) => {
+        sendRequestXML: async ({ ticket }: any) => { 
           console.log('📤 sendRequestXML called with ticket:', ticket);
-          const next = jobQueue.next(ticket);
+          
+          const next = await jobQueue.next(ticket);
           const qbxml = next?.qbxml ?? '';
 
-          if (qbxml) console.log('📋 Sending request:', qbxml.substring(0, 200) + '...');
-          else console.log('✅ No more requests');
+          if (qbxml) {
+            console.log('📋 Sending request:', qbxml.substring(0, 200) + '...');
+          } else {
+            console.log('✅ No more requests');
+          }
 
           return { sendRequestXMLResult: qbxml };
         },
 
-        receiveResponseXML: ({ ticket, response, hresult, message }: any) => {
+        receiveResponseXML: async ({ ticket, response, hresult, message }: any) => {  // Mejor hacerlo async también
           console.log('📥 receiveResponseXML called with ticket:', ticket);
 
           if (hresult && hresult !== '0') {
@@ -45,7 +56,7 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           }
 
           try {
-            const progress = jobQueue.onResponse(ticket, response);
+            const progress = await jobQueue.onResponse(ticket, response);
             console.log('📊 Progress:', progress + '%');
             return { receiveResponseXMLResult: progress };
           } catch (e: any) {

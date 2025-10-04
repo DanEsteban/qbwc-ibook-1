@@ -147,11 +147,11 @@ export const wsdlXml = `<?xml version="1.0" encoding="UTF-8"?>
 
   <service name="QBWebConnectorSvc">
     <port name="QBWebConnectorSvcSoap" binding="tns:QBWebConnectorSvcSoap">
-      <soap:address location="http://localhost:3000/qbwc"/>
+      <soap:address location="http://localhost:3005/qbwc"/>
     </port>
   </service>
 </definitions>`;
 
 export function getWSDL(): string {
-  return wsdlXml.replace('http://localhost:3000', AppConfig.baseUrl);
+  return wsdlXml.replace('http://localhost:3005', AppConfig.baseUrl);
 }

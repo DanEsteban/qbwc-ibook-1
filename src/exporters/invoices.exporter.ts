@@ -1,11 +1,23 @@
-import { invoiceQueryRq } from '../qbxml/builders';
-// import dayjs from 'dayjs';
+import { creditMemoQueryRq, invoiceQueryRq } from '../qbxml/builders';
 
 export class InvoicesExporter {
-  buildRequest(iteratorId?: string) {
-    // Si quieres filtrar por fecha:
-    // const from = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
-    // return invoiceQueryRq(iteratorId, 10, from);
-    return invoiceQueryRq(iteratorId, 10);
-  }
+    buildInvoiceRequest(
+        iteratorId?: string,
+        maxResults?: number,
+        dateFrom?: string,
+        dateTo?: string,
+        onlyModified?: boolean
+    ): string {
+        return invoiceQueryRq(iteratorId, maxResults, dateFrom, dateTo, onlyModified);
+    }
+
+    buildCreditMemoRequest(
+        iteratorId?: string,
+        maxResults?: number,
+        dateFrom?: string,
+        dateTo?: string,
+        onlyModified?: boolean
+    ): string {
+        return creditMemoQueryRq(iteratorId, maxResults, dateFrom, dateTo, onlyModified);
+    }
 }
