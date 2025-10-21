@@ -37,6 +37,12 @@ export function itemInventoryQueryRq(iteratorId?: string, max?: number) {
     );
 }
 
+function toQBDateTime(date: string, which: 'start' | 'end'): string {
+    // si te llega ya con 'T', la respetamos
+    if (date.includes('T')) return date;
+    return which === 'start' ? `${date}T00:00:00` : `${date}T23:59:59`;
+}
+
 export function invoiceQueryRq(
     iteratorId?: string,
     max?: number,
@@ -44,19 +50,35 @@ export function invoiceQueryRq(
     toDate?: string,
     onlyModified?: boolean
 ) {
-    const it = iteratorId ? ` iterator="Continue" iteratorID="${iteratorId}"` : ' iterator="Start"';
+    const it = iteratorId
+        ? ` iterator="Continue" iteratorID="${iteratorId}"`
+        : ` iterator="Start"`;
+
     const m = max ?? AppConfig.maxReturned;
 
     let filters = '';
+
     if (onlyModified && fromDate) {
-        filters += `<FromModifiedDate>${fromDate}</FromModifiedDate>\n`;
-        if (toDate) filters += `<ToModifiedDate>${toDate}</ToModifiedDate>\n`;
+        // 🔧 Filtro por fecha de *modificación* (correcto para QBXML)
+        const fromDT = toQBDateTime(fromDate, 'start');
+        const toDT = toDate ? toQBDateTime(toDate, 'end') : toQBDateTime(fromDate, 'end');
+
+        filters += `<ModifiedDateRangeFilter>
+<FromModifiedDate>${fromDT}</FromModifiedDate>
+<ToModifiedDate>${toDT}</ToModifiedDate>
+</ModifiedDateRangeFilter>
+`;
     } else if (fromDate) {
+        // 🔧 Filtro por fecha de *transacción* (solo fecha, sin 'T' normalmente)
+        const from = fromDate.includes('T') ? fromDate.split('T')[0] : fromDate;
+        const to = toDate ? (toDate.includes('T') ? toDate.split('T')[0] : toDate) : undefined;
+
         filters += `<TxnDateRangeFilter>
-<FromTxnDate>${fromDate}</FromTxnDate>\n`;
-        if (toDate) filters += `<ToTxnDate>${toDate}</ToTxnDate>\n`;
-        filters += `</TxnDateRangeFilter>\n`;
+<FromTxnDate>${from}</FromTxnDate>
+${to ? `<ToTxnDate>${to}</ToTxnDate>\n` : ''}</TxnDateRangeFilter>
+`;
     }
+    // Nota: si no hay fromDate, no ponemos filtros de fecha (válido).
 
     const inner = `<InvoiceQueryRq${it}>
 <MaxReturned>${m}</MaxReturned>

@@ -4,14 +4,10 @@ export interface DocMeta {
   category: 'invoices';
   iteratorId?: string;
   remaining?: number;
-  seq: number;          // número de mensaje / página
+  seq: number;
   jobId?: string;
-  companyId?: string;
 }
 
 export interface DocSink {
-  // Recibe una respuesta XML de QuickBooks convertida a JSON y la publica
   pushDocument(meta: DocMeta, quickbooksJson: any): Promise<void>;
 }
-
-

@@ -1,0 +1,21 @@
+export const DOC_MAP = {
+    FACTURA: 'invoice',
+    NOTA_CREDITO: 'credit_memo',
+    RECIBO_VENTA: 'sales_receipt',
+    PAGO: 'payment',
+    ESTIMADO: 'estimate',
+    FACTURA_PROVEEDOR: 'bill',
+    NOTA_CREDITO_PROVEEDOR: 'vendor_credit',
+    ORDEN_COMPRA: 'purchase_order',
+    ASIENTO: 'journal_entry',
+    // idempotentes
+    invoice: 'invoice',
+    credit_memo: 'credit_memo',
+    sales_receipt: 'sales_receipt',
+    payment: 'payment',
+    estimate: 'estimate',
+    bill: 'bill',
+    vendor_credit: 'vendor_credit',
+    purchase_order: 'purchase_order',
+    journal_entry: 'journal_entry',
+} as const;

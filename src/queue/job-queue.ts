@@ -5,13 +5,37 @@ import { DocSink } from '../sink/sink';
 import axios, { AxiosInstance } from 'axios';
 import { AppConfig } from '../config/app.config';
 
+
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
 
 interface Session {
   jobId: string;
-  companyId: string;
   seq: number;
 }
+
+type CanonicalDoc = 'invoice' | 'credit_memo';
+
+const DOC_MAP = {
+  FACTURA: 'invoice',
+  NOTA_CREDITO: 'credit_memo',
+  factura: 'invoice',
+  nota_credito: 'credit_memo',
+  invoice: 'invoice',          // idempotente
+  credit_memo: 'credit_memo',  // idempotente
+} as const;
+
+function normalizeDocumentType(input?: string | null): CanonicalDoc {
+  if (!input) return 'invoice';
+  const key = String(input).trim();
+  const mapped = (DOC_MAP as Record<string, CanonicalDoc | undefined>)[key];
+  if (mapped) return mapped;
+
+  // Fallbacks comunes
+  const k = key.toLowerCase().replace(/[\s-]/g, '');
+  if (k === 'creditmemo' || k === 'creditmem o') return 'credit_memo';
+  return 'invoice';
+}
+
 export class JobQueue {
   private sessions = new Map<string, Session>();
   private lastError = new Map<string, string>();
@@ -26,21 +50,26 @@ export class JobQueue {
     });
   }
 
-  async createSession(ticket: string, companyId: string): Promise<boolean> {
-    try {
-      console.log('🔍 Checking for pending jobs...', { companyId });
+  // ✅ Helper para respuestas del backend
+  private unwrapResponse(response: any) {
+    return response.data?.data ?? response.data;
+  }
 
-      const response = await this.backendClient.get('/quickbooks/qbd/jobs/pending', {
-        params: { companyId }
+  async createSession(ticket: string): Promise<boolean> {
+    try {
+      console.log('🔍 Checking for pending jobs...', {
+        companyId: AppConfig.companyId,
+        apiKey: AppConfig.targetApiKey ? '***' + AppConfig.targetApiKey.slice(-4) : 'NOT SET' // ✅ Log parcial
       });
 
-      console.log('📥 Backend response:', response.data);
+      const response = await this.backendClient.get('/quickbooks/qbd/jobs/pending', {
+        params: { companyId: AppConfig.companyId }
+      });
 
-      // 🔧 ACCEDER AL NIVEL CORRECTO
-      const jobData = response.data.data || response.data;
+      const jobData = this.unwrapResponse(response);
 
       if (!jobData.hasJobs) {
-        console.log('⚠️ No pending jobs for company', companyId);
+        console.log('⚠️ No pending jobs for company', AppConfig.companyId);
         return false;
       }
 
@@ -53,7 +82,6 @@ export class JobQueue {
 
       this.sessions.set(ticket, {
         jobId,
-        companyId,
         seq: 0
       });
 
@@ -64,9 +92,29 @@ export class JobQueue {
       console.error('❌ Error creating session:', {
         message: error.message,
         response: error.response?.data,
-        status: error.response?.status
+        status: error.response?.status,
+        headers: error.config?.headers
       });
       return false;
+    }
+  }
+
+  private async reportError(
+    jobId: string,
+    error: {
+      type: 'connection' | 'authentication' | 'qbxml' | 'processing' | 'timeout';
+      message: string;
+      code?: string;
+      context?: any;
+    }
+  ): Promise<void> {
+    try {
+      await this.backendClient.post(
+        `/quickbooks/qbd/jobs/${jobId}/error`,
+        error
+      );
+    } catch (err) {
+      console.error(`Failed to report error for job ${jobId}:`, err);
     }
   }
 
@@ -75,10 +123,24 @@ export class JobQueue {
     if (!session) return null;
 
     try {
-      const response = await this.backendClient.get(`/quickbooks/qbd/jobs/${session.jobId}/next`);
+      const response = await this.backendClient.get(
+        `/quickbooks/qbd/jobs/${session.jobId}/next`,
+        { timeout: 10000 }
+      );
 
-      const jobParams = response.data.data || response.data;
+      const jobParams = this.unwrapResponse(response);
 
+      // ✅ LOG para inspección
+      console.log('📋 Job parameters received:', {
+        dateFrom: jobParams.dateFrom,
+        dateTo: jobParams.dateTo,
+        maxResults: jobParams.maxResults,
+        documentType: jobParams.documentType,
+        iteratorId: jobParams.iteratorId,
+        onlyModified: jobParams.onlyModified
+      });
+
+      // ✅ Desestructura DESPUÉS de recibir
       const {
         dateFrom,
         dateTo,
@@ -88,11 +150,13 @@ export class JobQueue {
         onlyModified
       } = jobParams;
 
+      // ✅ Normaliza el tipo (enum, snake_case o canonical → canonical)
+      const kind = normalizeDocumentType(documentType);
+
       const exporter = new InvoicesExporter();
       let qbxml: string;
 
-      // Construir request según el tipo de documento
-      if (documentType === 'nota_credito') {
+      if (kind === 'credit_memo') {
         qbxml = exporter.buildCreditMemoRequest(
           iteratorId,
           maxResults,
@@ -100,7 +164,7 @@ export class JobQueue {
           dateTo,
           onlyModified
         );
-        console.log(`Request CreditMemo (from: ${dateFrom}, to: ${dateTo})`);
+        console.log(`📋 Request CreditMemo (from: ${dateFrom}, to: ${dateTo})`);
       } else {
         qbxml = exporter.buildInvoiceRequest(
           iteratorId,
@@ -109,14 +173,26 @@ export class JobQueue {
           dateTo,
           onlyModified
         );
-        console.log(`Request Invoice (from: ${dateFrom}, to: ${dateTo})`);
+        console.log(`📋 Request Invoice (from: ${dateFrom}, to: ${dateTo})`);
       }
 
       return { qbxml };
 
-    } catch (error) {
-      console.error('Error building request:', error.message);
-      this.lastError.set(ticket, error.message);
+    } catch (error: any) {
+      const errorMessage = error.message || 'Unknown error building request';
+      await this.reportError(session.jobId, {
+        type: error.code === 'ECONNABORTED' ? 'timeout' : 'processing',
+        message: errorMessage,
+        code: error.code,
+        context: {
+          endpoint: 'next',
+          ticket,
+          jobId: session.jobId
+        }
+      });
+
+      console.error(`❌ Error in next():`, errorMessage);
+      this.lastError.set(ticket, errorMessage);
       await this.completeJobWithError(session.jobId);
       this.sessions.delete(ticket);
       return null;
@@ -131,9 +207,44 @@ export class JobQueue {
       const quickbooksJson = parser.parse(responseXml);
       const { done, nextIterator, remaining } = parseIterator(responseXml);
 
+      // Verificar estado de QuickBooks (Info/Warn/Error)
+      const qbStatus = this.extractQBStatus(quickbooksJson);
+      if (qbStatus) {
+        const { code, severity, message } = qbStatus;
+
+        if (severity === 'Error') {
+          console.error('QuickBooks Error:', qbStatus);
+
+          await this.reportError(session.jobId, {
+            type: 'qbxml',
+            message: `QB Error ${code}: ${message}`,
+            code: String(code),
+            context: { iteratorId: nextIterator, remaining }
+          });
+
+          this.lastError.set(ticket, `QB Error ${code}: ${message}`);
+          await this.completeJobWithError(session.jobId);
+          this.sessions.delete(ticket);
+          return 100;
+        }
+
+        if (severity === 'Warn') {
+          console.warn('QuickBooks Warning:', qbStatus);
+          // seguimos el flujo normal; no cortamos el job
+        } else {
+          // Info: log suave
+          console.log('QuickBooks Info:', qbStatus);
+        }
+      }
+      // Verificar si hay datos válidos
+      if (!this.hasValidData(quickbooksJson)) {
+        await this.backendClient.post(`/quickbooks/qbd/jobs/${session.jobId}/complete`, { success: true });
+        this.sessions.delete(ticket);
+        return 100;
+      }
       session.seq++;
 
-      // Enviar documento al backend
+      // Enviar lote completo
       await this.sink.pushDocument(
         {
           ticket,
@@ -143,67 +254,128 @@ export class JobQueue {
           remaining,
           seq: session.seq,
           jobId: session.jobId,
-          companyId: session.companyId,
         },
         quickbooksJson
       );
 
-      // Actualizar progreso en el backend
-      await this.backendClient.post(`/quickbooks/qbd/jobs/${session.jobId}/progress`, {
-        page: session.seq,
-        iteratorId: nextIterator
-      });
 
-      // Si no terminó, continuar
+      // Actualizar progreso
+      await this.backendClient.post(
+        `/quickbooks/qbd/jobs/${session.jobId}/progress`,
+        { page: session.seq, iteratorId: nextIterator }
+      );
+
+      // Si hay más páginas del mismo tipo, continúa
       if (!done && nextIterator) {
         console.log(`Continuing... (remaining: ${remaining})`);
         return 50;
       }
 
-      // Verificar si hay más tipos de documentos por procesar
-      // const jobResponse = await this.backendClient.get(`/quickbooks/qbd/jobs/${session.jobId}/next`);
-      // const nextDocType = this.getNextDocumentType(
-      //   jobResponse.data.documentTypes,
-      //   jobResponse.data.documentType
-      // );
-      const jobResponse = await this.backendClient.get(`/quickbooks/qbd/jobs/${session.jobId}/next`);
-      const jobParams = jobResponse.data?.data ?? jobResponse.data;
-
-      const nextDocType = this.getNextDocumentType(
-        jobParams.documentTypes,
-        jobParams.documentType
+      // Verificar siguiente tipo de documento
+      const jobResponse = await this.backendClient.get(
+        `/quickbooks/qbd/jobs/${session.jobId}/next`
       );
+      const jobParams = this.unwrapResponse(jobResponse);
+
+      const typesNormalized: CanonicalDoc[] = Array.isArray(jobParams.documentTypes)
+        ? jobParams.documentTypes.map((t: string) => normalizeDocumentType(t))
+        : [];
+
+      const currentNormalized: CanonicalDoc = normalizeDocumentType(jobParams.documentType);
+      const nextDocType = this.getNextDocumentType(typesNormalized, currentNormalized);
 
       if (nextDocType) {
-        // Cambiar al siguiente tipo
-        await this.backendClient.post(`/quickbooks/qbd/jobs/${session.jobId}/progress`, {
-          documentType: nextDocType,
-          iteratorId: null,
-          page: 0
-        });
+        await this.backendClient.post(
+          `/quickbooks/qbd/jobs/${session.jobId}/progress`,
+          {
+            documentType: nextDocType,
+            iteratorId: null,
+            page: 0
+          }
+        );
         session.seq = 0;
         console.log(`Switching to ${nextDocType}`);
         return 50;
       }
 
       // Completado
-      await this.backendClient.post(`/quickbooks/qbd/jobs/${session.jobId}/complete`, {
-        success: true
-      });
+      await this.backendClient.post(
+        `/quickbooks/qbd/jobs/${session.jobId}/complete`,
+        { success: true }
+      );
       this.sessions.delete(ticket);
       console.log(`Job ${session.jobId} completed`);
       return 100;
 
-    } catch (error) {
-      console.error('Error processing response:', error.message);
-      this.lastError.set(ticket, error.message);
+    } catch (error: any) {
+      const errorMessage = error.message || 'Unknown error processing response';
+
+      // 🔥 REPORTAR ERROR DE PROCESAMIENTO
+      await this.reportError(session.jobId, {
+        type: 'processing',
+        message: errorMessage,
+        code: error.code,
+        context: {
+          endpoint: 'onResponse',
+          ticket,
+          seq: session.seq
+        }
+      });
+
+      console.error('Error processing response:', errorMessage);
+      this.lastError.set(ticket, errorMessage);
       await this.completeJobWithError(session.jobId);
       this.sessions.delete(ticket);
       return 100;
     }
   }
+  // ✅ AGREGAR: Método para verificar si hay datos válidos
+  private hasValidData(json: any): boolean {
+    const msgsRs = json?.QBXML?.QBXMLMsgsRs;
+    if (!msgsRs) return false;
+
+    // Verificar InvoiceQueryRs
+    const invoiceRet = msgsRs.InvoiceQueryRs?.InvoiceRet;
+    if (invoiceRet && (Array.isArray(invoiceRet) ? invoiceRet.length > 0 : true)) {
+      return true;
+    }
+
+    // Verificar CreditMemoQueryRs
+    const creditMemoRet = msgsRs.CreditMemoQueryRs?.CreditMemoRet;
+    if (creditMemoRet && (Array.isArray(creditMemoRet) ? creditMemoRet.length > 0 : true)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // ✅ AGREGAR: Método para extraer errores de QuickBooks
+  private extractQBStatus(json: any): { code: number; severity: 'Info' | 'Warn' | 'Error'; message: string } | null {
+    const msgsRs = json?.QBXML?.QBXMLMsgsRs;
+    if (!msgsRs) return null;
+
+    // Busca el primer Rs relevante que venga en la respuesta
+    const candidates = [
+      msgsRs.InvoiceQueryRs,
+      msgsRs.CreditMemoQueryRs,
+      // si luego agregas más tipos, añádelos aquí:
+      // msgsRs.SalesReceiptQueryRs, msgsRs.PaymentQueryRs, ...
+    ].filter(Boolean);
+
+    const rs = candidates[0];
+    if (!rs) return null;
+
+    const code = Number(rs.statusCode ?? 0);
+    const severity = (rs.statusSeverity ?? 'Info') as 'Info' | 'Warn' | 'Error';
+    const message = String(rs.statusMessage ?? '');
+
+    return { code, severity, message };
+  }
 
   private getNextDocumentType(types: string[], current: string): string | null {
+    // ✅ Validar que types sea array
+    if (!Array.isArray(types)) return null;
+
     const index = types.indexOf(current);
     if (index === -1 || index === types.length - 1) return null;
     return types[index + 1];
@@ -211,11 +383,22 @@ export class JobQueue {
 
   private async completeJobWithError(jobId: string) {
     try {
-      await this.backendClient.post(`/quickbooks/qbd/jobs/${jobId}/complete`, {
-        success: false
+      console.log(`⚠️ Completing job ${jobId} with error status`);
+      await this.backendClient.post(
+        `/quickbooks/qbd/jobs/${jobId}/complete`,
+        { success: false },
+        {
+          headers: {
+            'X-Company-Id': AppConfig.companyId // ✅ Agregar header
+          }
+        }
+      );
+    } catch (error: any) {
+      console.error('❌ Error completing job with error:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data
       });
-    } catch (error) {
-      console.error('Error completing job with error:', error.message);
     }
   }
 

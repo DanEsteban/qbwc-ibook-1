@@ -20,9 +20,7 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           }
 
           const ticket = `${Date.now()}-${Math.random()}`;
-          
-          const companyId = AppConfig.companyId;
-          const hasJobs = await jobQueue.createSession(ticket, companyId);
+          const hasJobs = await jobQueue.createSession(ticket);
           
           if (!hasJobs) {
             console.log('⚠️ No pending jobs for this company');
@@ -30,6 +28,7 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           }
 
           console.log('✅ Authentication successful, ticket:', ticket);
+          console.log('🏢 Company:', AppConfig.companyId);
           return { authenticateResult: { string: [ticket, ''] } };
         },
 
@@ -48,8 +47,8 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           return { sendRequestXMLResult: qbxml };
         },
 
-        receiveResponseXML: async ({ ticket, response, hresult, message }: any) => {  // Mejor hacerlo async también
-          console.log('📥 receiveResponseXML called with ticket:', ticket);
+        receiveResponseXML: async ({ ticket, response, hresult, message }: any) => {
+          console.log('📥 receiveResponseXML ca lled with ticket:', ticket);
 
           if (hresult && hresult !== '0') {
             console.log('⚠️ QB Error:', hresult, message);
