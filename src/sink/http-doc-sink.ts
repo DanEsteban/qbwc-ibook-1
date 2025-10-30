@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { DocMeta, DocSink } from './sink';
 import { AppConfig } from '../config/app.config';
+import pRetry from 'p-retry';
 
 export class HttpDocSink implements DocSink {
      private client = axios.create({
@@ -13,34 +14,23 @@ export class HttpDocSink implements DocSink {
      });
 
      async pushDocument(meta: DocMeta, quickbooksJson: any): Promise<void> {
-          const payload = {
-               meta,
-               quickbooks_data: quickbooksJson
-          };
-
+          const payload = { meta, quickbooks_data: quickbooksJson };
           const jobId = meta.jobId ?? null;
 
-          try {
-               await this.client.post('/quickbooks/qbd/receive', payload, {
-                    headers: {
-                         'Idempotency-Key': `${meta.ticket}:${meta.category}:${meta.seq}`,
-                         'X-Company-Id': AppConfig.companyId,
-                         ...(jobId && { 'X-Job-Id': jobId }),
-                    },
-               });
-               console.log('✅ Document sent successfully');
-          } catch (error: any) {
-               if (error.response?.status === 409) {
-                    console.log('⚠️ Document already processed (duplicate)');
-                    return;
-               }
-               console.error('❌ Error sending document:', {
-                    message: error.message,
-                    status: error.response?.status,
-                    data: error.response?.data,
-               });
-               throw error;
-          }
+          const headers = {
+               'Idempotency-Key': `${meta.ticket}:${meta.category}:${meta.iteratorId ?? 'none'}:${meta.seq}:${jobId ?? 'none'}`,
+               'X-Company-Id': AppConfig.companyId,
+               ...(jobId && { 'X-Job-Id': jobId }),
+          };
+
+          await pRetry(
+               async () => {
+                    await this.client.post('/quickbooks/qbd/receive', payload, { headers, timeout: 20000 });
+               },
+               { retries: 3, factor: 2, minTimeout: 1500, maxTimeout: 7000 }
+          );
+
+          console.log('✅ Document sent successfully');
      }
 
 }

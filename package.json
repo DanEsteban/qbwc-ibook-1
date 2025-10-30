@@ -27,6 +27,7 @@
     "dayjs": "^1.11.18",
     "dotenv": "^17.2.2",
     "fast-xml-parser": "^5.2.5",
+    "p-retry": "^7.1.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "soap": "^1.4.1"

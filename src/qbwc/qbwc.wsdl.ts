@@ -153,5 +153,5 @@ export const wsdlXml = `<?xml version="1.0" encoding="UTF-8"?>
 </definitions>`;
 
 export function getWSDL(): string {
-  return wsdlXml.replace('http://localhost:3005', AppConfig.baseUrl);
+  return wsdlXml.replaceAll('http://localhost:3005', AppConfig.baseUrl);
 }

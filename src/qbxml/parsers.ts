@@ -60,17 +60,19 @@ export function parseInvoices(responseXml: string) {
           BalanceRemaining: Number(inv.BalanceRemaining ?? 0),
           Memo: inv.Memo ?? null,
           TimeModified: inv.TimeModified,
-          Lines: (Array.isArray(inv.InvoiceLineRet) ? inv.InvoiceLineRet : inv.InvoiceLineRet ? [inv.InvoiceLineRet] : []).map((ln: any) => ({
-               TxnLineID: ln.TxnLineID,
-               ItemRef: {
-                    ListID: ln.ItemRef?.ListID ?? null,
-                    FullName: ln.ItemRef?.FullName ?? null,
-               },
-               Desc: ln.Desc ?? null,
-               Quantity: ln.Quantity != null ? Number(ln.Quantity) : null,
-               Rate: ln.Rate != null ? Number(ln.Rate) : null,
-               Amount: ln.Amount != null ? Number(ln.Amount) : null,
-               UnitOfMeasure: ln.UnitOfMeasure ?? null,
-          })),
+          Lines: (Array.isArray(inv.InvoiceLineRet) ? inv.InvoiceLineRet : inv.InvoiceLineRet ? [inv.InvoiceLineRet] : []).map(
+               (ln: any) => ({
+                    TxnLineID: ln.TxnLineID,
+                    ItemRef: {
+                         ListID: ln.ItemRef?.ListID ?? null,
+                         FullName: ln.ItemRef?.FullName ?? null,
+                    },
+                    Desc: ln.Desc ?? null,
+                    Quantity: ln.Quantity != null ? Number(ln.Quantity) : null,
+                    Rate: ln.Rate != null ? Number(ln.Rate) : null,
+                    Amount: ln.Amount != null ? Number(ln.Amount) : null,
+                    UnitOfMeasure: ln.UnitOfMeasure ?? null,
+               })
+          ),
      }));
 }

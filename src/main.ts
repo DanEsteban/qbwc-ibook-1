@@ -8,10 +8,16 @@ import { JobQueue } from './queue/job-queue';
 import { qbwcServiceFactory } from './qbwc/qbwc.soap';
 import { HttpDocSink } from './sink/http-doc-sink';
 
+import * as express from 'express';
+
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-
   const server = app.getHttpAdapter().getInstance();
+
+  // 🔒 Asegurar que nada intercepte el XML del SOAP
+  server.use('/qbwc', express.raw({ type: () => true, limit: '10mb' }));
+
   //(Web Services Description Language)
   const wsdlXml = getWSDL(); 
 

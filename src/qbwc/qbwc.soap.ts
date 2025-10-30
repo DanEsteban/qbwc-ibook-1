@@ -24,7 +24,7 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
           
           if (!hasJobs) {
             console.log('⚠️ No pending jobs for this company');
-            return { authenticateResult: { string: ['', 'No work to do'] } };
+            return { authenticateResult: { string: ['', 'none'] } };
           }
 
           console.log('✅ Authentication successful, ticket:', ticket);
@@ -48,7 +48,7 @@ export function qbwcServiceFactory(jobQueue: JobQueue) {
         },
 
         receiveResponseXML: async ({ ticket, response, hresult, message }: any) => {
-          console.log('📥 receiveResponseXML ca lled with ticket:', ticket);
+          console.log('📥 receiveResponseXML called with ticket:', ticket);
 
           if (hresult && hresult !== '0') {
             console.log('⚠️ QB Error:', hresult, message);

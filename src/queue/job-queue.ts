@@ -8,10 +8,12 @@ import { AppConfig } from '../config/app.config';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
 
-interface Session {
+type Session = {
   jobId: string;
-  seq: number;
-}
+  seq: number;           // páginas (para progreso)
+  sentCount: number;     // documentos enviados acumulados
+  maxResults?: number;   // límite global del job (cap)
+};
 
 type CanonicalDoc = 'invoice' | 'credit_memo';
 
@@ -29,8 +31,6 @@ function normalizeDocumentType(input?: string | null): CanonicalDoc {
   const key = String(input).trim();
   const mapped = (DOC_MAP as Record<string, CanonicalDoc | undefined>)[key];
   if (mapped) return mapped;
-
-  // Fallbacks comunes
   const k = key.toLowerCase().replace(/[\s-]/g, '');
   if (k === 'creditmemo' || k === 'creditmem o') return 'credit_memo';
   return 'invoice';
@@ -45,8 +45,9 @@ export class JobQueue {
     this.backendClient = axios.create({
       baseURL: `${AppConfig.targetApiBase}/api`,
       headers: {
-        'X-API-Key': AppConfig.targetApiKey
-      }
+        'X-API-Key': AppConfig.targetApiKey,
+      },
+      timeout: 20000,
     });
   }
 
@@ -82,7 +83,8 @@ export class JobQueue {
 
       this.sessions.set(ticket, {
         jobId,
-        seq: 0
+        seq: 0,
+        sentCount: 0,
       });
 
       console.log(`✅ Session created for job ${jobId}`);
@@ -127,8 +129,12 @@ export class JobQueue {
         `/quickbooks/qbd/jobs/${session.jobId}/next`,
         { timeout: 10000 }
       );
-
       const jobParams = this.unwrapResponse(response);
+
+      // Seteamos el límite global UNA vez
+      if (!session.maxResults && typeof jobParams.maxResults === 'number') {
+        session.maxResults = jobParams.maxResults; // <-- cap global (25/50/100)
+      }
 
       // ✅ LOG para inspección
       console.log('📋 Job parameters received:', {
@@ -154,30 +160,12 @@ export class JobQueue {
       const kind = normalizeDocumentType(documentType);
 
       const exporter = new InvoicesExporter();
-      let qbxml: string;
-
-      if (kind === 'credit_memo') {
-        qbxml = exporter.buildCreditMemoRequest(
-          iteratorId,
-          maxResults,
-          dateFrom,
-          dateTo,
-          onlyModified
-        );
-        console.log(`📋 Request CreditMemo (from: ${dateFrom}, to: ${dateTo})`);
-      } else {
-        qbxml = exporter.buildInvoiceRequest(
-          iteratorId,
-          maxResults,
-          dateFrom,
-          dateTo,
-          onlyModified
-        );
-        console.log(`📋 Request Invoice (from: ${dateFrom}, to: ${dateTo})`);
-      }
+      const qbxml =
+        kind === 'credit_memo'
+          ? exporter.buildCreditMemoRequest(iteratorId, maxResults, dateFrom, dateTo, onlyModified)
+          : exporter.buildInvoiceRequest(iteratorId, maxResults, dateFrom, dateTo, onlyModified);
 
       return { qbxml };
-
     } catch (error: any) {
       const errorMessage = error.message || 'Unknown error building request';
       await this.reportError(session.jobId, {
@@ -244,6 +232,12 @@ export class JobQueue {
       }
       session.seq++;
 
+
+      // Cuenta de documentos en este batch
+      const batchCount = this.countBatch(quickbooksJson);
+      session.seq++;
+      session.sentCount += batchCount;
+
       // Enviar lote completo
       await this.sink.pushDocument(
         {
@@ -258,16 +252,26 @@ export class JobQueue {
         quickbooksJson
       );
 
-
       // Actualizar progreso
       await this.backendClient.post(
         `/quickbooks/qbd/jobs/${session.jobId}/progress`,
         { page: session.seq, iteratorId: nextIterator }
       );
 
+      // 🚫 HARD-STOP: cortar cuando alcance el límite global del job
+      if (session.maxResults && session.sentCount >= session.maxResults) {
+        console.log(`🔚 Límite global ${session.maxResults} alcanzado. Cerrando job ${session.jobId}.`);
+        await this.backendClient.post(`/quickbooks/qbd/jobs/${session.jobId}/complete`, { success: true });
+        this.sessions.delete(ticket);
+        return 100;
+      }
+
+
       // Si hay más páginas del mismo tipo, continúa
       if (!done && nextIterator) {
         console.log(`Continuing... (remaining: ${remaining})`);
+        // 💤 micro-pausa opcional para no saturar QB:
+        // await new Promise(r => setTimeout(r, 300));
         return 50;
       }
 
@@ -349,6 +353,19 @@ export class JobQueue {
     return false;
   }
 
+  private countBatch(json: any): number {
+    const msgsRs = json?.QBXML?.QBXMLMsgsRs;
+    const invoiceRet = msgsRs?.InvoiceQueryRs?.InvoiceRet;
+    const creditMemoRet = msgsRs?.CreditMemoQueryRs?.CreditMemoRet;
+
+    if (Array.isArray(invoiceRet)) return invoiceRet.length;
+    if (Array.isArray(creditMemoRet)) return creditMemoRet.length;
+    if (invoiceRet) return 1;
+    if (creditMemoRet) return 1;
+    return 0;
+  }
+
+
   // ✅ AGREGAR: Método para extraer errores de QuickBooks
   private extractQBStatus(json: any): { code: number; severity: 'Info' | 'Warn' | 'Error'; message: string } | null {
     const msgsRs = json?.QBXML?.QBXMLMsgsRs;
@@ -389,7 +406,7 @@ export class JobQueue {
         { success: false },
         {
           headers: {
-            'X-Company-Id': AppConfig.companyId // ✅ Agregar header
+            'X-Company-Id': AppConfig.companyId
           }
         }
       );
